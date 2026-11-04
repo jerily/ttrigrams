@@ -1,0 +1,2 @@
+if {![package vsatisfies [package provide Tcl] @TTRIGRAMS_TCL_REQUIREMENT@]} {return}
+package ifneeded ttrigrams @PROJECT_VERSION@ @TTRIGRAMS_LOAD@

@@ -1,0 +1,21 @@
+name: Tests
+on: [push, pull_request]
+jobs:
+  tcl:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        shared: [ON, OFF]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y tcl8.6-dev
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=${{ matrix.shared }} -DTCL_INCLUDE_PATH=/usr/include/tcl8.6
+      - run: cmake --build build --parallel 2
+      - run: ctest --test-dir build --output-on-failure
+  core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DTTRIGRAMS_BUILD_TCL=OFF -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+      - run: cmake --build build --parallel 2
+      - run: ctest --test-dir build --output-on-failure
