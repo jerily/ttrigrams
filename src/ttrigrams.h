@@ -23,6 +23,13 @@ typedef int (*ttrigrams_visitor)(const ttrigrams_match *match, void *context);
  * Returns NULL for invalid input or allocation failure. Indexes are immutable. */
 ttrigrams *ttrigrams_create(const char *const *texts, size_t count);
 void ttrigrams_destroy(ttrigrams *index);
+/* Portable snapshot of documents and sorted postings. Caller frees the returned
+ * buffer with free(). Load restores postings without generating/sorting grams.
+ * NULL means invalid input or allocation failure. Serialize clears length on
+ * failure. Snapshot counts and document IDs are limited to UINT32_MAX. */
+unsigned char *ttrigrams_serialize(const ttrigrams *index, size_t *length);
+ttrigrams *ttrigrams_load(const void *bytes, size_t length);
+size_t ttrigrams_count(const ttrigrams *index);
 /* Finds literal substrings and suggestions within 0..2 edits of a substring.
  * Fuzzy candidates must share a query trigram. Queries shorter than three bytes
  * use literal matching only. Results follow input document order.
