@@ -100,6 +100,94 @@ static size_t first_posting(const ttrigrams *index, uint32_t gram) {
     return low;
 }
 
+static const unsigned char snapshot_header[8] = {'T', 'T', 'R', 'I', 'G', 0, 1, 0};
+
+static void write_u32(unsigned char *out, uint32_t value) {
+    for (int i = 3; i >= 0; --i) { out[i] = (unsigned char)value; value >>= 8; }
+}
+
+static uint32_t read_u32(const unsigned char *in) {
+    return ((uint32_t)in[0] << 24) | ((uint32_t)in[1] << 16) | ((uint32_t)in[2] << 8) | in[3];
+}
+
+size_t ttrigrams_count(const ttrigrams *index) { return index ? index->count : 0; }
+
+unsigned char *ttrigrams_serialize(const ttrigrams *index, size_t *length) {
+    if (!length) { return NULL; }
+    *length = 0;
+    if (!index || index->count > UINT32_MAX || index->posting_count > UINT32_MAX ||
+        index->posting_count > (SIZE_MAX - 16) / 7) { return NULL; }
+    size_t size = 16 + index->posting_count * 7;
+    for (size_t i = 0; i < index->count; ++i) {
+        if (size > SIZE_MAX - 4 - index->documents[i].length) { return NULL; }
+        size += 4 + index->documents[i].length;
+    }
+    unsigned char *bytes = malloc(size);
+    if (!bytes) { return NULL; }
+    memcpy(bytes, snapshot_header, sizeof(snapshot_header));
+    write_u32(bytes + 8, (uint32_t)index->count);
+    write_u32(bytes + 12, (uint32_t)index->posting_count);
+    unsigned char *out = bytes + 16;
+    for (size_t i = 0; i < index->count; ++i) {
+        size_t text_length = index->documents[i].length;
+        write_u32(out, (uint32_t)text_length);
+        memcpy(out + 4, index->documents[i].text, text_length);
+        out += 4 + text_length;
+    }
+    for (size_t i = 0; i < index->posting_count; ++i) {
+        uint32_t gram = index->postings[i].gram;
+        out[0] = (unsigned char)(gram >> 16);
+        out[1] = (unsigned char)(gram >> 8);
+        out[2] = (unsigned char)gram;
+        write_u32(out + 3, (uint32_t)index->postings[i].document);
+        out += 7;
+    }
+    *length = size;
+    return bytes;
+}
+
+ttrigrams *ttrigrams_load(const void *data, size_t length) {
+    const unsigned char *bytes = data;
+    if (!bytes || length < 16 || memcmp(bytes, snapshot_header, sizeof(snapshot_header))) { return NULL; }
+    size_t count = read_u32(bytes + 8), posting_count = read_u32(bytes + 12);
+    if (posting_count > (length - 16) / 7 || count > (length - 16 - posting_count * 7) / 4 ||
+        count > SIZE_MAX / sizeof(document) || posting_count > SIZE_MAX / sizeof(posting)) { return NULL; }
+    ttrigrams *index = calloc(1, sizeof(*index));
+    if (!index) { return NULL; }
+    index->documents = count ? calloc(count, sizeof(document)) : NULL;
+    if (count && !index->documents) { ttrigrams_destroy(index); return NULL; }
+    index->count = count;
+    size_t offset = 16, documents_end = length - posting_count * 7;
+    for (size_t i = 0; i < count; ++i) {
+        if (documents_end - offset < 4) { ttrigrams_destroy(index); return NULL; }
+        size_t text_length = read_u32(bytes + offset);
+        offset += 4;
+        if (text_length > TTRIGRAMS_MAX_TEXT_LENGTH || text_length > documents_end - offset ||
+            memchr(bytes + offset, 0, text_length)) { ttrigrams_destroy(index); return NULL; }
+        char *text = malloc(text_length + 1);
+        if (!text) { ttrigrams_destroy(index); return NULL; }
+        memcpy(text, bytes + offset, text_length);
+        text[text_length] = 0;
+        index->documents[i] = (document){text, text_length};
+        offset += text_length;
+    }
+    if (offset != documents_end) { ttrigrams_destroy(index); return NULL; }
+    index->postings = posting_count ? malloc(posting_count * sizeof(posting)) : NULL;
+    if (posting_count && !index->postings) { ttrigrams_destroy(index); return NULL; }
+    index->posting_count = posting_count;
+    for (size_t i = 0; i < posting_count; ++i, offset += 7) {
+        posting value = {((uint32_t)bytes[offset] << 16) | ((uint32_t)bytes[offset + 1] << 8) |
+                         bytes[offset + 2], read_u32(bytes + offset + 3)};
+        if (value.document >= count || !bytes[offset] || !bytes[offset + 1] || !bytes[offset + 2] ||
+            (i && compare_postings(&index->postings[i - 1], &value) >= 0)) {
+            ttrigrams_destroy(index);
+            return NULL;
+        }
+        index->postings[i] = value;
+    }
+    return index;
+}
+
 static unsigned short minimum(unsigned short a, unsigned short b) { return a < b ? a : b; }
 
 static int substring_distance(const char *text, size_t text_length, const char *query, size_t query_length) {

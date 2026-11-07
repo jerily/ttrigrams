@@ -1,5 +1,6 @@
 #include "ttrigrams.h"
 #include <assert.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +20,31 @@ int main(void) {
     const char *texts[] = {"web server for tcl", "encryption toolkit", "aaaaaa", "abc----bcd----cde", "", "tk"};
     ttrigrams *index = ttrigrams_create(texts, 6);
     assert(index);
+    size_t snapshot_length;
+    unsigned char *snapshot = ttrigrams_serialize(index, &snapshot_length);
+    assert(snapshot && snapshot_length > 8);
+    for (size_t i = 0; i < snapshot_length; ++i) {
+        assert(!ttrigrams_load(snapshot, i));
+    }
+    ttrigrams *restored = ttrigrams_load(snapshot, snapshot_length);
+    assert(restored);
+    size_t restored_length;
+    unsigned char *second = ttrigrams_serialize(restored, &restored_length);
+    assert(second && snapshot_length == restored_length && !memcmp(snapshot, second, snapshot_length));
+    free(second);
+    for (size_t i = 0; i < snapshot_length; ++i) {
+        unsigned char original = snapshot[i];
+        snapshot[i] ^= 255;
+        ttrigrams *mutated = ttrigrams_load(snapshot, snapshot_length);
+        if (mutated) {
+            assert(ttrigrams_search(mutated, "web", 2, stop, NULL) != -1);
+            ttrigrams_destroy(mutated);
+        }
+        snapshot[i] = original;
+    }
+    free(snapshot);
+    ttrigrams_destroy(index);
+    index = restored;
     results found = {0};
     assert(ttrigrams_search(index, "web", 2, collect, &found) == 0);
     assert(found.count == 1 && found.values[0].document == 0 && found.values[0].distance == 0);
@@ -57,6 +83,9 @@ int main(void) {
     assert(ttrigrams_search(index, "aaa", 0, collect, &found) == 0 && found.count == 1);
     ttrigrams_destroy(index);
     ttrigrams_destroy(NULL);
+    size_t invalid_length = 1;
+    assert(!ttrigrams_serialize(NULL, &invalid_length) && invalid_length == 0);
+    assert(!ttrigrams_load(NULL, 0));
     puts("Trigram candidates, verification, ownership and limits passed");
     return 0;
 }

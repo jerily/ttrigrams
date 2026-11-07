@@ -13,7 +13,7 @@ Trigram substring search and typo suggestions for C and Tcl.
 ## Tcl
 
 ```tcl
-package require ttrigrams 0.1.0
+package require ttrigrams 0.2.0
 set index [::ttrigrams::create descriptions {{web server} {encryption toolkit}}]
 $index search encrytion
 # {document 1 distance 1 shared_trigrams 5 query_trigrams 7}
@@ -52,3 +52,37 @@ concurrent reads; the wrapper belongs to its Tcl interpreter.
 
 Texts are limited to 4096 bytes and queries to 255 bytes. The Tcl wrapper
 rejects embedded NUL. Corpus-size limits belong to the application.
+
+## Index snapshots
+
+`$index serialize` returns a binary Tcl byte array.
+`::ttrigrams::load command_name bytes` restores a new command directly from the
+snapshot, rejecting existing commands and malformed or unknown-format data.
+Read and write snapshots with binary channels (`open path wb` / `open path rb`).
+The caller owns file IO; loading never evaluates Tcl or rebuilds the index.
+
+The C API exposes `ttrigrams_serialize` and `ttrigrams_load`; free serialized buffers
+with `free()`. Serialization is deterministic. Format version 1 uses explicit
+bytes, independent of pointer size, alignment and host byte order. Tcl snapshots
+are limited to INT_MAX bytes.
+The eight-byte header is `54 54 52 49 47 00 01 00`, followed by big-endian
+32-bit document and posting counts. Each document has a big-endian 32-bit byte
+length and raw bytes; each posting has three gram bytes and a big-endian 32-bit
+document ID. Postings remain sorted by gram then document with no duplicates.
+Counts cannot exceed UINT32_MAX. `$index count` / `ttrigrams_count` reports the
+number of documents, including empty and duplicate texts.
+
+## Security
+
+### Surface
+C byte strings, Tcl commands and binary snapshots; no filesystem, network or
+script evaluation in the extension.
+
+### Protections
+Text and query limits bound search work per document. Snapshot loading checks
+lengths, allocation arithmetic, NUL bytes, document references and strict posting
+order before publishing an index. It restores postings without regenerating or
+sorting grams; trusted producers remain responsible for posting completeness.
+
+### Pending
+Callers bound corpus sizes, snapshot bytes and request rates for their workload.

@@ -70,7 +70,9 @@ proc edit_distance {a b} {
 }
 test reference-1 {Compare candidates and distances with brute-force substring enumeration} -body {
     set texts [words {} 4]
-    ::ttrigrams::create docs $texts
+    ::ttrigrams::create original $texts
+    ::ttrigrams::load docs [original serialize]
+    original destroy
     foreach query [lrange [words {} 4] 1 end] {
         set qgrams [grams $query]
         foreach limit {0 1 2} {
@@ -101,6 +103,76 @@ test reference-1 {Compare candidates and distances with brute-force substring en
     docs destroy
     return ok
 } -result ok
+
+
+test snapshot-1 {Portable format has deterministic bytes} -body {
+    ::ttrigrams::create original {abc}
+    set hex [binary encode hex [original serialize]]
+    original destroy
+    set hex
+} -result 545452494700010000000001000000010000000361626361626300000000
+
+test snapshot-2 {Binary file round trip preserves searches and survives producer destruction} -body {
+    ::ttrigrams::create original {{web server} {encryption toolkit} {} café {web server}}
+    set expected {}
+    foreach query {tcl web encrytion café unknown} {lappend expected [original search $query]}
+    set bytes [original serialize]
+    original destroy
+    set channel [open [file join $::tcltest::temporaryDirectory index.bin] wb]
+    puts -nonewline $channel $bytes
+    close $channel
+    set channel [open [file join $::tcltest::temporaryDirectory index.bin] rb]
+    set restored [::ttrigrams::load restored [read $channel]]
+    close $channel
+    file delete [file join $::tcltest::temporaryDirectory index.bin]
+    set actual {}
+    foreach query {tcl web encrytion café unknown} {lappend actual [$restored search $query]}
+    set result [list [expr {$expected eq $actual}] [expr {$bytes eq [$restored serialize]}]]
+    $restored destroy
+    set result
+} -result {1 1}
+
+test snapshot-3 {Invalid data and command collisions do not publish or replace commands} -body {
+    ::ttrigrams::create original {abc}
+    set bytes [original serialize]
+    set rejected {}
+    foreach invalid [list {} [string range $bytes 0 5] [string range $bytes 0 end-1] \
+            [string replace $bytes 6 6 [binary format c 2]] $bytes\x00] {
+        lappend rejected [catch {::ttrigrams::load bad $invalid}]
+    }
+    lappend rejected [catch {::ttrigrams::load original $bytes}] \
+        [catch {original serialize extra}] [expr {[info commands bad] eq {}}]
+    original destroy
+    lsort -unique $rejected
+} -result 1
+
+test snapshot-4 {Empty indexes round trip} -body {
+    ::ttrigrams::create original {}
+    ::ttrigrams::load restored [original serialize]
+    set result [restored search web]
+    original destroy
+    restored destroy
+    set result
+} -result {}
+
+test snapshot-5 {Document counts include empty and duplicate texts} -body {
+    ::ttrigrams::create original {{} abc abc}
+    ::ttrigrams::load restored [original serialize]
+    set result [list [original count] [restored count]]
+    original destroy
+    restored destroy
+    set result
+} -result {3 3}
+
+test snapshot-boundary {Maximum input length survives serialization} -body {
+    set value [string repeat a 4096]
+    ::ttrigrams::create original [list $value]
+    ::ttrigrams::load restored [original serialize]
+    set result [expr {[llength [restored search aaa 0]] == 1}]
+    original destroy
+    restored destroy
+    set result
+} -result 1
 
 set failed $::tcltest::numTests(Failed)
 ::tcltest::cleanupTests
